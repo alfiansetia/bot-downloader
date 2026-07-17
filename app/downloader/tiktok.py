@@ -13,6 +13,7 @@ class TikTokDownloader(BaseDownloader):
     URL_PATTERNS = [
         r"(?:https?://)?(?:www\.)?tiktok\.com/",
         r"(?:https?://)?(?:www\.)?vm\.tiktok\.com/",
+        r"(?:https?://)?(?:www\.)?vt\.tiktok\.com/",
         r"(?:https?://)?(?:www\.)?tiktok\.com/@[\w.]+/video/",
     ]
 

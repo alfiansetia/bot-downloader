@@ -1,5 +1,5 @@
 # ── Core ──
-yt-dlp>=2024.12.0
+yt-dlp>=2026.07.04
 
 # ── Telegram Bot ──
 python-telegram-bot>=21.0

@@ -21,6 +21,43 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def clean_error_message(error: Optional[str]) -> Optional[str]:
+    if not error:
+        return error
+
+    error_lower = error.lower()
+
+    # Instagram-specific friendly messages
+    if "instagram" in error_lower and "empty media response" in error_lower:
+        return "Instagram membatasi akses tanpa login. Silakan coba sesaat lagi, atau gunakan cookies jika ini postingan privat."
+
+    if "private" in error_lower or "login" in error_lower or "sign in" in error_lower:
+        return "Video ini bersifat privat, memerlukan login, atau tidak dapat diakses secara publik."
+
+    # Simplify other errors
+    lines = error.split('\n')
+    for line in lines:
+        if "error:" in line.lower():
+            clean_line = line.strip()
+            # Strip out common yt-dlp trailing instructions
+            lower_line = clean_line.lower()
+            for pattern in [
+                "; please report",
+                "; check if",
+                "; see http",
+                ". see http",
+                ". confirm you",
+                "confirm you are",
+            ]:
+                if pattern in lower_line:
+                    idx = lower_line.index(pattern)
+                    clean_line = clean_line[:idx].strip()
+                    lower_line = clean_line.lower()
+            return clean_line
+
+    return error[:200]
+
+
 class DownloadResult:
     """Result of a download operation."""
 
@@ -36,7 +73,7 @@ class DownloadResult:
         self.file_path = file_path
         self.title = title
         self.duration = duration
-        self.error = error
+        self.error = clean_error_message(error)
 
 
 class BaseDownloader(ABC):
@@ -71,6 +108,7 @@ class BaseDownloader(ABC):
         Download video from the given URL.
         Returns a DownloadResult with the file path or error.
         """
+        import time
         from app.downloader.base import DownloadResult
 
         out_dir = output_dir or settings.DOWNLOAD_DIR
@@ -78,24 +116,40 @@ class BaseDownloader(ABC):
 
         opts = cls._get_ydl_opts(out_dir)
 
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+        max_retries = 3
+        last_exception = None
 
-                # Try to get the actual downloaded file
-                filename = ydl.prepare_filename(info)
-                # yt-dlp may append extensions; find the actual file
-                file_path = _resolve_file_path(out_dir, info)
+        for attempt in range(1, max_retries + 1):
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
 
-                return DownloadResult(
-                    success=True,
-                    file_path=file_path,
-                    title=info.get("title"),
-                    duration=info.get("duration"),
+                    # Try to get the actual downloaded file
+                    filename = ydl.prepare_filename(info)
+                    # yt-dlp may append extensions; find the actual file
+                    file_path = _resolve_file_path(out_dir, info)
+
+                    return DownloadResult(
+                        success=True,
+                        file_path=file_path,
+                        title=info.get("title"),
+                        duration=info.get("duration"),
+                    )
+            except Exception as e:
+                last_exception = e
+                logger.warning(
+                    "Download attempt %d/%d failed for %s: %s",
+                    attempt,
+                    max_retries,
+                    url,
+                    str(e),
                 )
-        except Exception as e:
-            logger.exception("Download failed for %s", url)
-            return DownloadResult(success=False, error=str(e))
+                if attempt < max_retries:
+                    # Wait slightly before retrying
+                    time.sleep(attempt * 1.5)
+
+        logger.exception("All %d download attempts failed for %s", max_retries, url)
+        return DownloadResult(success=False, error=str(last_exception))
 
 
 def _resolve_file_path(output_dir: str, info: dict) -> Optional[str]:
@@ -137,15 +191,48 @@ def _resolve_file_path(output_dir: str, info: dict) -> Optional[str]:
 
     return None
 
-    if matches:
-        return max(matches, key=os.path.getmtime)
 
-    # Last resort: any video file in output dir
-    videos = glob.glob(os.path.join(output_dir, "*.mp4")) + \
-             glob.glob(os.path.join(output_dir, "*.webm")) + \
-             glob.glob(os.path.join(output_dir, "*.mkv"))
-    if videos:
-        return max(videos, key=os.path.getmtime)
+def resolve_redirects(url: str) -> str:
+    """
+    Follow HTTP redirects to find the final URL.
+    This helps bypass shortener-related blocks or extraction failures.
+    """
+    import urllib.request
+    import urllib.parse
 
-    return None
+    try:
+        parsed = urllib.parse.urlparse(url)
+        domain = parsed.netloc.lower()
+    except Exception:
+        return url
+
+    # Run redirect resolution for known redirect domains to keep things fast
+    redirect_domains = [
+        "vt.tiktok.com",
+        "vm.tiktok.com",
+        "youtu.be",
+        "fb.watch",
+        "fb.gg",
+        "t.co",
+        "bit.ly",
+        "tinyurl.com",
+    ]
+
+    if not any(d in domain for d in redirect_domains):
+        return url
+
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            final_url = response.geturl()
+            logger.info("Resolved redirect from %s to %s", url, final_url)
+            return final_url
+    except Exception as e:
+        logger.warning("Failed to resolve redirects for %s: %s", url, e)
+        return url
 

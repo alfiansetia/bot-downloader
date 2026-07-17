@@ -127,6 +127,10 @@ def download_video(req: DownloadRequest, background_tasks: BackgroundTasks):
 
     url = req.url.strip()
 
+    # ── Resolve redirects (e.g. vt.tiktok.com) ──
+    from app.downloader.base import resolve_redirects
+    url = resolve_redirects(url)
+
     # Find matching downloader
     downloader = None
     for dl_cls in DOWNLOADERS:

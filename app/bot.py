@@ -75,6 +75,10 @@ async def handle_message(update: Update, context):
 
     url = update.message.text.strip()
 
+    # ── Resolve redirects (e.g. vt.tiktok.com) ──
+    from app.downloader.base import resolve_redirects
+    url = resolve_redirects(url)
+
     # ── Find matching downloader ──
     downloader = _get_downloader(url)
     if not downloader:
