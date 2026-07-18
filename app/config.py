@@ -37,6 +37,9 @@ class Settings:
     YTDLP_COOKIES_FILE: Optional[str] = None
     YTDLP_USER_AGENT: Optional[str] = None
 
+    # ── Logs ──
+    LOGS_DIR: str = "logs"
+
     @classmethod
     def from_env(cls) -> "Settings":
         import os
@@ -64,6 +67,7 @@ class Settings:
             REQUEST_TIMEOUT=int(os.getenv("REQUEST_TIMEOUT", "30")),
             YTDLP_COOKIES_FILE=os.getenv("YTDLP_COOKIES_FILE"),
             YTDLP_USER_AGENT=os.getenv("YTDLP_USER_AGENT"),
+            LOGS_DIR=os.getenv("LOGS_DIR", "logs"),
         )
 
 

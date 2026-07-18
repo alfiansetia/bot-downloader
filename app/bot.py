@@ -42,6 +42,62 @@ def _get_downloader(url: str):
     return None
 
 
+def log_chat_interaction(
+    chat_id: int,
+    user_id: int,
+    username: Optional[str],
+    first_name: Optional[str],
+    last_name: Optional[str],
+    url: str,
+    platform: Optional[str],
+    success: bool,
+    error: Optional[str] = None
+) -> None:
+    """Log user chat interaction to a JSON file named after the chat ID."""
+    import datetime
+    import json
+    from pathlib import Path
+
+    try:
+        logs_dir = Path(settings.LOGS_DIR)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_file = logs_dir / f"{chat_id}.json"
+
+        # Load existing logs
+        if log_file.exists():
+            try:
+                with open(log_file, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+                    if not isinstance(history, list):
+                        history = []
+            except Exception:
+                history = []
+        else:
+            history = []
+
+        # Create new entry
+        entry = {
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "user_id": user_id,
+            "username": username,
+            "first_name": first_name,
+            "last_name": last_name,
+            "url": url,
+            "platform": platform,
+            "success": success,
+            "error": error
+        }
+
+        history.append(entry)
+
+        # Write back
+        with open(log_file, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+            
+    except Exception as e:
+        logger.error("Failed to write chat log for chat_id %d: %s", chat_id, e)
+
+
 async def start(update: Update, context):
     chat_id = update.effective_chat.id
     await update.message.reply_text(
@@ -94,10 +150,32 @@ async def handle_message(update: Update, context):
 
         if not result.success:
             await msg.edit_text(f"❌ Gagal mendownload: {result.error}")
+            log_chat_interaction(
+                chat_id=update.effective_chat.id,
+                user_id=update.effective_user.id,
+                username=update.effective_user.username,
+                first_name=update.effective_user.first_name,
+                last_name=update.effective_user.last_name,
+                url=url,
+                platform=downloader.PLATFORM,
+                success=False,
+                error=result.error
+            )
             return
 
         if not result.file_path or not os.path.exists(result.file_path):
             await msg.edit_text("❌ File tidak ditemukan setelah download.")
+            log_chat_interaction(
+                chat_id=update.effective_chat.id,
+                user_id=update.effective_user.id,
+                username=update.effective_user.username,
+                first_name=update.effective_user.first_name,
+                last_name=update.effective_user.last_name,
+                url=url,
+                platform=downloader.PLATFORM,
+                success=False,
+                error="File not found after download"
+            )
             return
 
         # Check file size
@@ -106,6 +184,17 @@ async def handle_message(update: Update, context):
             await msg.edit_text(
                 f"⚠️ File terlalu besar ({file_size_mb:.1f} MB). "
                 f"Maksimal {settings.MAX_FILE_SIZE_MB} MB."
+            )
+            log_chat_interaction(
+                chat_id=update.effective_chat.id,
+                user_id=update.effective_user.id,
+                username=update.effective_user.username,
+                first_name=update.effective_user.first_name,
+                last_name=update.effective_user.last_name,
+                url=url,
+                platform=downloader.PLATFORM,
+                success=False,
+                error=f"File too large: {file_size_mb:.1f} MB"
             )
             os.remove(result.file_path)
             return
@@ -129,12 +218,34 @@ async def handle_message(update: Update, context):
                 read_timeout=120,
             )
 
+        log_chat_interaction(
+            chat_id=update.effective_chat.id,
+            user_id=update.effective_user.id,
+            username=update.effective_user.username,
+            first_name=update.effective_user.first_name,
+            last_name=update.effective_user.last_name,
+            url=url,
+            platform=downloader.PLATFORM,
+            success=True
+        )
+
         # Cleanup
         os.remove(result.file_path)
 
     except Exception as e:
         logger.exception("Error processing message")
         await msg.edit_text(f"❌ Error: {str(e)}")
+        log_chat_interaction(
+            chat_id=update.effective_chat.id,
+            user_id=update.effective_user.id,
+            username=update.effective_user.username,
+            first_name=update.effective_user.first_name,
+            last_name=update.effective_user.last_name,
+            url=url,
+            platform=downloader.PLATFORM if downloader else None,
+            success=False,
+            error=str(e)
+        )
 
 
 def build_application() -> Application:
