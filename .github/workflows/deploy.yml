@@ -46,8 +46,8 @@ jobs:
             sleep 10
             docker compose ps
 
-            echo "==> Health check"
-            curl -fsS http://localhost:${API_PORT:-8000}/health || \
-              curl -fsS http://localhost:8000/health
+            echo "==> Health check (dari dalam container, tanpa publish port)"
+            docker compose exec -T bot-downloader python -c \
+              "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/health').read().decode())"
 
             echo "==> Deploy selesai ✅"

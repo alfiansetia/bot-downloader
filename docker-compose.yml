@@ -5,10 +5,15 @@ services:
     build: .
     container_name: bot-downloader
     restart: unless-stopped
-    ports:
-      - "${API_PORT:-8000}:8000"
+    # Tanpa `ports:` — akses hanya lewat network internal (cloudflared tunnel
+    # ke http://bot-downloader:8000). Tidak ada port yang dipublish ke host.
     env_file:
       - .env
+    environment:
+      # Override path agar sesuai mount volume di container
+      # (.env lokal pakai path Windows seperti ./downloads).
+      DOWNLOAD_DIR: /tmp/downloads
+      LOGS_DIR: /app/logs
     volumes:
       - ./downloads:/tmp/downloads
       - ./logs:/app/logs

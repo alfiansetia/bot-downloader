@@ -1,6 +1,7 @@
 # Bot Downloader
 
-Bot Telegram & REST API untuk download video dari **YouTube, TikTok, Instagram, Facebook, dan Twitter/X**.
+Bot Telegram & REST API untuk download **video, foto, dan carousel/album** dari
+**YouTube, TikTok, Instagram, Facebook, dan Twitter/X**.
 
 Dibangun dengan **Python**, **yt-dlp**, **FastAPI**, dan **python-telegram-bot**.
 
@@ -9,13 +10,15 @@ Dibangun dengan **Python**, **yt-dlp**, **FastAPI**, dan **python-telegram-bot**
 ## 📋 Fitur
 
 - ✅ Download video dari **YouTube** (termasuk Shorts)
-- ✅ Download video dari **TikTok**
-- ✅ Download video dari **Instagram** (Reel, Post video, Story)
-- ✅ Download video dari **Facebook** (Video, Reel)
-- ✅ Download video dari **Twitter/X**
-- ✅ **Telegram Bot** — kirim link, dapat video
-- ✅ **REST API** — endpoint HTTP untuk download
-- ✅ **Docker support** — siap deploy
+- ✅ Download **video & foto slide** dari **TikTok**
+- ✅ Download dari **Instagram** (Reel, Post foto, Carousel/album, Story)
+- ✅ Download dari **Facebook** (Video, Reel, Post foto)
+- ✅ Download **video & foto** dari **Twitter/X**
+- ✅ **Telegram Bot** — kirim link, terima video / foto / album sekaligus (media group, maks 10 per grup)
+- ✅ **REST API** — 1 file dikembalikan langsung, album/carousel dikembalikan sebagai `.zip`
+- ✅ Batas ukuran per file (`MAX_FILE_SIZE_MB`, default 50 MB mengikuti limit Telegram)
+- ✅ **Docker support** — tanpa publish port, siap di-tunnel via Cloudflare
+- ✅ **Auto-deploy** via GitHub Actions (push ke `main` → deploy ke server)
 
 ---
 
@@ -24,82 +27,86 @@ Dibangun dengan **Python**, **yt-dlp**, **FastAPI**, dan **python-telegram-bot**
 ### 1. Clone & Setup
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/alfiansetia/bot-downloader.git
 cd bot-downloader
 
-# Copy environment file
+# Linux/macOS
 cp .env.example .env
+# Windows
+copy .env.example .env
 ```
 
 ### 2. Konfigurasi `.env`
 
-Edit file `.env` dan isi minimal:
+Minimal isi:
 
 ```env
 # Wajib: Token dari @BotFather
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklmNOPqrstUVwxyz
 
-# Wajib: URL publik bot (untuk webhook Telegram)
+# Wajib untuk production/webhook: URL publik bot (tanpa path)
 APP_URL=https://bot.example.com
 
-# Opsional: batasi user (pisahkan koma)
+# Opsional: batasi user (pisahkan koma, kosong = semua boleh)
 TELEGRAM_ALLOWED_USERS=123456789,987654321
 ```
 
+Daftar lengkap variabel ada di [tabel konfigurasi](#️-konfigurasi).
+
 ### 3. Jalankan
 
-#### 🖥️ Local (tanpa Docker)
+#### 🖥️ Local — Windows (venv Laragon / Python 3.10+)
+
+```powershell
+C:\laragon\bin\python\python-3.10\python.exe -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+python -m app api    # API saja
+python -m app all    # API + bot polling (untuk dev tanpa webhook)
+```
+
+#### 🖥️ Local — Linux/macOS
 
 ```bash
-# Buat & aktifkan virtual environment
 python3 -m venv venv
 source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Copy & isi .env
-cp .env.example .env
-# lalu edit .env, isi TELEGRAM_BOT_TOKEN dan APP_URL
-
-# Jalankan server (API + Bot via webhook)
-python -m app
+python -m app api
 ```
 
-#### 🐳 Docker
+Mode run: `python -m app [bot|api|all]` (default: `all`).
+Tanpa `APP_URL` → bot jalan mode polling di background thread.
+Dengan `APP_URL` → bot jalan via webhook (lihat bawah).
+
+#### 🐳 Docker (server)
 
 ```bash
-# Copy & edit .env
-cp .env.example .env
-# lalu edit .env, isi TELEGRAM_BOT_TOKEN dan APP_URL
-
-# Build & jalankan
+cp .env.example .env   # lalu isi .env
 docker compose up -d --build
-
-# Lihat log
 docker compose logs -f
-
-# Lihat log container tertentu
-docker compose logs bot-downloader -f
-
-# Lihat log realtime dengan timestamp
-docker compose logs -f --tail=50
 ```
+
+> Container **tidak mempublish port** ke host. Akses hanya lewat network
+> internal `app-network` (tunnel ke `http://bot-downloader:8000`).
+> `DOWNLOAD_DIR`/`LOGS_DIR` otomatis dioverride ke path container
+> (`/tmp/downloads`, `/app/logs`) via `docker-compose.yml`.
 
 ---
 
 ## 🤖 Webhook Telegram Bot
 
-Bot menggunakan **webhook** — server menerima update dari Telegram secara otomatis.
+Bot menggunakan **webhook** di production — server menerima update dari Telegram otomatis.
 
 **Cara kerja:**
 
-1. Set `APP_URL` di `.env` dengan domain publik (misal `https://bot.example.com`)
+1. Set `APP_URL` di `.env` dengan domain publik (misal `https://bot.example.com`, wajib HTTPS)
 2. Jalankan server
-3. Server otomatis set webhook ke `https://api.telegram.org/bot<TOKEN>/setWebhook` saat startup
-4. Telegram kirim update ke `https://bot.example.com/webhook`
+3. Server otomatis set webhook ke `<APP_URL>/webhook` saat startup
+4. Telegram kirim update ke endpoint tersebut
 
-> **Catatan:** Pastikan domain sudah指向 ke server dan pakai **HTTPS** (Telegram mewajibkan HTTPS untuk webhook).
+> **Catatan:** Pastikan domain sudah mengarah ke server dan memakai **HTTPS**
+> (Telegram mewajibkan HTTPS untuk webhook). `API_WORKERS` disarankan `1`
+> agar webhook tidak di-set ganda oleh tiap worker.
 
 ### Cek status webhook
 
@@ -121,11 +128,17 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/deleteWebhook"
 # Cek health API
 curl http://localhost:8000/health
 
-# Download video via API
+# Download video/foto tunggal (dikembalikan sebagai file)
 curl -X POST http://localhost:8000/download \
   -H "Content-Type: application/json" \
   -d '{"url": "https://www.tiktok.com/@user/video/123456"}' \
-  -o video.mp4
+  -o media.mp4
+
+# Download carousel/album (dikembalikan sebagai .zip)
+curl -X POST http://localhost:8000/download \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.instagram.com/p/xxxx/"}' \
+  -o album.zip
 ```
 
 ---
@@ -134,56 +147,99 @@ curl -X POST http://localhost:8000/download \
 
 Semua konfigurasi via file `.env`:
 
-| Variable                 | Default  | Description                                   |
-| ------------------------ | -------- | --------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`     | -        | Token dari @BotFather **(wajib untuk bot)**   |
-| `TELEGRAM_ALLOWED_USERS` | (kosong) | Batasi user Telegram (pisahkan koma)          |
-| `API_PORT`               | `8000`   | Port REST API                                 |
-| `MAX_FILE_SIZE_MB`       | `50`     | Maksimal ukuran file (MB)                     |
-| `DEBUG`                  | `false`  | Mode debug                                    |
-| `YTDLP_COOKIES_FILE`     | -        | Path file cookies untuk akses konten terbatas |
+| Variable | Default | Description |
+|---|---|---|
+| `APP_NAME` | `Bot Downloader` | Nama aplikasi (tampil di response API) |
+| `APP_VERSION` | `1.0.0` | Versi aplikasi |
+| `DEBUG` | `false` | Mode debug (logging lebih detail) |
+| `API_HOST` | `0.0.0.0` | Host binding REST API |
+| `API_PORT` | `8000` | Port REST API (run lokal; di Docker tidak dipublish) |
+| `API_WORKERS` | `1` | Jumlah worker (pakai `1` untuk webhook) |
+| `APP_URL` | - | URL publik untuk webhook, mis. `https://bot.example.com` **(wajib production)** |
+| `TELEGRAM_BOT_TOKEN` | - | Token dari @BotFather **(wajib agar bot jalan)** |
+| `TELEGRAM_ALLOWED_USERS` | (kosong) | Batasi user Telegram (pisahkan koma, kosong = semua boleh) |
+| `DOWNLOAD_DIR` | `./downloads` | Direktori file sementara (di Docker dioverride ke `/tmp/downloads`) |
+| `MAX_FILE_SIZE_MB` | `50` | Maksimal ukuran **per file** (MB, mengikuti limit Telegram) |
+| `REQUEST_TIMEOUT` | `30` | Timeout request download (detik) |
+| `LOGS_DIR` | `logs` | Direktori log interaksi per chat ID (di Docker dioverride ke `/app/logs`) |
+| `YTDLP_COOKIES_FILE` | - | Path file cookies (untuk konten terbatas/private) |
+| `YTDLP_USER_AGENT` | - | Custom User-Agent bila default diblokir |
+
+---
+
+## 📌 Batasan yang perlu diketahui
+
+- **Ukuran file:** maksimal `MAX_FILE_SIZE_MB` per file. Bot melewati file yang
+  kebesaran (dengan catatan); API menolak dengan `413` bila semua file kebesaran.
+- **Album Telegram:** maksimal 10 media per grup — album lebih besar hanya
+  10 pertama yang dikirim (ada pemberitahuan di chat).
+- **Instagram:** sering membatasi akses tanpa login (`empty media response`).
+  Solusinya: coba lagi nanti atau isi `YTDLP_COOKIES_FILE` dari browser yang login.
+- **Konten privat/dihapus:** bot & API mengembalikan pesan error yang jelas.
 
 ---
 
 ## 🐳 Deploy Production
 
-Contoh dengan reverse proxy (Caddy/Traefik/Nginx) + domain + SSL:
+Arsitektur: `bot-downloader` + `cloudflared` dalam satu Docker network
+(`app-network`), tanpa port terpublish.
 
 ```yaml
-# docker-compose.yml tambahan untuk production
+# docker-compose.yml (sudah termasuk di repo)
 services:
-  caddy:
-    image: caddy:latest
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-    depends_on:
-      - bot-downloader
+  bot-downloader:
+    build: .
+    container_name: bot-downloader
+    restart: unless-stopped
+    env_file: [.env]
+    networks: [app-network]   # external, dibuat oleh stack lain
 
-volumes:
-  caddy_data:
+networks:
+  app-network:
+    name: app-network
+    external: true
 ```
 
+```yaml
+# Ingress cloudflared (di stack cloudflare)
+ingress:
+  - hostname: bot.example.com
+    service: http://bot-downloader:8000
 ```
-# Caddyfile
-yourdomain.com {
-    reverse_proxy bot-downloader:8000
-}
+
+### Auto-deploy via GitHub Actions
+
+Setiap push ke `main` otomatis deploy (lihat `.github/workflows/deploy.yml`).
+Isi secrets di **Settings → Secrets → Actions**:
+
+| Secret | Isi |
+|---|---|
+| `SSH_HOST` | IP / domain server |
+| `SSH_USER` | user SSH |
+| `SSH_KEY` | private key (isi `id_*`, bukan `.pub`) |
+| `SSH_PORT` | port SSH (default `22`) |
+| `PROJECT_PATH` | path project di server, mis. `/opt/bot-downloader` |
+
+Sekali saja di server:
+
+```bash
+git clone git@github.com:alfiansetia/bot-downloader.git /opt/bot-downloader
+cd /opt/bot-downloader && cp .env.example .env  # isi TOKEN, APP_URL, dll
+docker network ls | grep app-network            # pastikan sudah ada
 ```
+
+`.env`, `downloads/`, `logs/` aman saat deploy karena masuk `.gitignore`.
 
 ---
 
 ## 📦 API Documentation
 
-| Method | Endpoint    | Description                 |
-| ------ | ----------- | --------------------------- |
-| `GET`  | `/`         | Info aplikasi               |
-| `GET`  | `/health`   | Health check                |
-| `POST` | `/download` | Download video              |
-| `POST` | `/webhook`  | Telegram webhook (internal) |
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/` | Info aplikasi + platform & media yang didukung |
+| `GET` | `/health` | Health check (`{"status":"ok"}`) |
+| `POST` | `/download` | Download media. 1 file → file langsung; album → `.zip` |
+| `POST` | `/webhook` | Telegram webhook (internal) |
 
 **Contoh API call:**
 
@@ -191,15 +247,35 @@ yourdomain.com {
 curl -X POST http://localhost:8000/download \
   -H "Content-Type: application/json" \
   -d '{"url": "https://www.instagram.com/reel/xxxxx/"}' \
-  -o video.mp4
+  -o hasil.mp4
 ```
+
+**Response header tambahan:**
+
+| Header | Arti |
+|---|---|
+| `X-Platform` | `youtube` / `tiktok` / `instagram` / `facebook` / `twitter` |
+| `X-Title` | Judul konten |
+| `X-Media-Type` | `video` / `photo` / `mixed` |
+| `X-Media-Count` | Jumlah file |
+| `X-Excluded-Too-Large` | Jumlah file yang dilewati karena melebihi batas (bila ada) |
+| `X-Archive` | Nama file zip (bila hasil berupa album) |
+
+**Error:**
+
+| Status | Arti |
+|---|---|
+| `400` | URL tidak dikenali / download gagal (lihat `detail`) |
+| `413` | File melebihi `MAX_FILE_SIZE_MB` |
+| `500` | File tidak ditemukan setelah download |
 
 ---
 
 ## 🛠 Tech Stack
 
-- **Python 3.12**
-- **yt-dlp** — engine download video
+- **Python 3.12** (Docker) / 3.10+ (lokal)
+- **yt-dlp** — engine download video & foto
 - **FastAPI** — REST API
 - **python-telegram-bot** — Telegram Bot
-- **Docker** — containerization
+- **Docker** — containerization (tanpa publish port, via internal network)
+- **GitHub Actions + Cloudflare Tunnel** — deploy & ekspos production
