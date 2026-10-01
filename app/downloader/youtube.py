@@ -11,8 +11,9 @@ from app.config import settings
 class YouTubeDownloader(BaseDownloader):
     PLATFORM = "youtube"
     URL_PATTERNS = [
-        r"(?:https?://)?(?:www\.)?(?:youtube\.com|youtu\.be)/",
+        r"(?:https?://)?(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)/",
         r"(?:https?://)?(?:www\.)?youtube\.com/shorts/",
+        r"(?:https?://)?youtu\.be/[\w\-]+",
     ]
 
     @classmethod

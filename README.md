@@ -175,7 +175,18 @@ Semua konfigurasi via file `.env`:
   10 pertama yang dikirim (ada pemberitahuan di chat).
 - **Instagram:** sering membatasi akses tanpa login (`empty media response`).
   Solusinya: coba lagi nanti atau isi `YTDLP_COOKIES_FILE` dari browser yang login.
+  Postingan foto & carousel publik didukung via fallback (oEmbed + embed page).
+- **TikTok:** video didukung penuh; slideshow foto (`/photo/`) didukung via
+  fallback (maks 10 gambar). Konten privat / akun privat butuh cookies.
+- **Twitter/X:** video didukung penuh; tweet foto-only didukung via fallback
+  (maks 4 foto, sesuai batas X). Akun protected butuh login.
+- **Facebook:** video/reel publik didukung; postingan foto publik didukung via
+  fallback `og:image`. Postingan teman-saja / grup tertutup butuh cookies.
+- **YouTube:** video publik & unlisted-with-link didukung; video privat,
+  khusus member, atau dibatasi umur butuh cookies akun yang berhak.
 - **Konten privat/dihapus:** bot & API mengembalikan pesan error yang jelas.
+  Tanpa terkecuali, konten privat TETAP tidak bisa diunduh tanpa
+  `YTDLP_COOKIES_FILE` dari akun yang punya akses (bukan bug — batasan platform).
 
 ---
 

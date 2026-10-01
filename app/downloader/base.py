@@ -65,8 +65,37 @@ def clean_error_message(error: Optional[str]) -> Optional[str]:
     if "instagram" in error_lower and "empty media response" in error_lower:
         return "Instagram membatasi akses tanpa login. Silakan coba sesaat lagi, atau gunakan cookies jika ini postingan privat."
 
+    if "there is no video in this post" in error_lower:
+        return (
+            "Postingan ini berupa foto (bukan video) dan gambarnya gagal diambil otomatis. "
+            "Jika postingan privat, isi YTDLP_COOKIES_FILE dengan cookies dari browser yang sudah login."
+        )
+
+    if "no video could be found in this tweet" in error_lower:
+        return (
+            "Tweet ini berupa foto (bukan video) dan gambarnya gagal diambil otomatis. "
+            "Jika tweet dari akun privat/protected, diperlukan login."
+        )
+
     if "private" in error_lower or "login" in error_lower or "sign in" in error_lower:
+        if "youtube" in error_lower:
+            return "Video YouTube ini privat, unlisted tanpa akses, khusus member, atau memerlukan login/cookies."
+        if "tiktok" in error_lower:
+            return "Video TikTok ini privat atau akunnya privat. Diperlukan login/cookies yang punya akses."
+        if "facebook" in error_lower:
+            return "Postingan Facebook ini privat (teman-saja/grup tertutup) atau memerlukan login."
+        if "twitter" in error_lower or "x.com" in error_lower:
+            return "Tweet ini dari akun privat/protected, sudah dihapus, atau memerlukan login."
         return "Konten ini bersifat privat, memerlukan login, atau tidak dapat diakses secara publik."
+
+    if (
+        "unsupported url" in error_lower
+        and ("tiktok" in error_lower or "/photo/" in error_lower)
+    ):
+        return "Link TikTok slideshow foto (/photo/) tidak didukung yt-dlp versi ini. Coba kirim link video, atau pastikan postingan bersifat publik."
+
+    if "age" in error_lower and "confirm" in error_lower:
+        return "Video ini dibatasi umur. Isi YTDLP_COOKIES_FILE dengan cookies dari akun yang sudah login dan terverifikasi umur."
 
     if "no media" in error_lower or "no video formats" in error_lower:
         return "Tidak ditemukan foto/video pada link tersebut. Mungkin postingan teks atau sudah dihapus."
@@ -317,18 +346,24 @@ def resolve_redirects(url: str) -> str:
     redirect_domains = [
         "vt.tiktok.com",
         "vm.tiktok.com",
+        "tiktok.com/t/",
         "youtu.be",
+        "youtube.com/redirect",
         "fb.watch",
         "fb.gg",
+        "facebook.com/share",
+        "m.facebook.com",
         "t.co",
         "bit.ly",
         "tinyurl.com",
         "ig.me",
         "instagr.am",
+        "instagram.com/share",
         "l.instagram.com",
     ]
 
-    if not any(d in domain for d in redirect_domains):
+    lowered = url.lower()
+    if not any(d in domain or d in lowered for d in redirect_domains):
         return url
 
     try:
