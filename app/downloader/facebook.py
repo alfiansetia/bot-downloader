@@ -17,6 +17,8 @@ class FacebookDownloader(BaseDownloader):
         r"(?:https?://)?(?:www\.)?fb\.watch/",
         r"(?:https?://)?(?:www\.)?facebook\.com/reel/",
         r"(?:https?://)?(?:www\.)?facebook\.com/share/",
+        r"(?:https?://)?(?:www\.)?facebook\.com/photo",
+        r"(?:https?://)?(?:www\.)?facebook\.com/[^/]+/posts/",
     ]
 
     @classmethod

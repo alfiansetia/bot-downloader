@@ -1,0 +1,56 @@
+# Auto-deploy ke server via SSH setiap push ke branch `main`.
+#
+# Secrets yang wajib diisi di GitHub (Settings → Secrets → Actions):
+#   SSH_HOST     - IP / domain server
+#   SSH_USER     - user SSH (mis. root / deploy)
+#   SSH_KEY      - private key (isi file ~/.ssh/id_*, BUKAN .pub)
+#   SSH_PORT     - port SSH (default 22)
+#   PROJECT_PATH - path project di server (mis. /opt/bot-downloader)
+#
+# Catatan: file `.env`, `downloads/`, `logs/` di server AMAN —
+# ketiganya ada di `.gitignore` sehingga `git pull` tidak menyentuhnya.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # tombol manual "Run workflow" di tab Actions
+
+jobs:
+  deploy:
+    name: Deploy to server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -e
+            echo "==> Masuk ke ${{ secrets.PROJECT_PATH }}"
+            cd ${{ secrets.PROJECT_PATH }}
+
+            echo "==> Pull kode terbaru"
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "==> Rebuild & restart container"
+            docker compose up -d --build
+
+            echo "==> Tunggu service siap"
+            sleep 10
+            docker compose ps
+
+            echo "==> Health check"
+            curl -fsS http://localhost:${API_PORT:-8000}/health || \
+              curl -fsS http://localhost:8000/health
+
+            echo "==> Bersihkan image lama (hemat disk)"
+            docker image prune -f
+
+            echo "==> Deploy selesai ✅"

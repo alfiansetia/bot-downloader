@@ -12,3 +12,12 @@ services:
     volumes:
       - ./downloads:/tmp/downloads
       - ./logs:/app/logs
+    networks:
+      - app-network
+
+# Join ke network yang sudah dipakai service mysql + cloudflared.
+# Pastikan network ini sudah ada (dibuat oleh stack mysql).
+networks:
+  app-network:
+    name: app-network
+    external: true

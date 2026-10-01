@@ -1,13 +1,17 @@
 """
-REST API — download videos via HTTP endpoints.
+REST API — download media (videos, photos, carousels) via HTTP endpoints.
 Built with FastAPI.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import mimetypes
 import os
+import shutil
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +30,7 @@ from app.downloader import (
     FacebookDownloader,
     TwitterDownloader,
 )
+from app.downloader.base import cleanup_result
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +94,7 @@ app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=li
 # ── Models ──
 
 class DownloadRequest(BaseModel):
-    url: str = Field(..., description="Video URL to download")
+    url: str = Field(..., description="Media URL to download (video, photo, or carousel/album)")
 
 
 class DownloadResponse(BaseModel):
@@ -101,6 +106,36 @@ class DownloadResponse(BaseModel):
     error: Optional[str] = None
 
 
+# ── Helpers ──
+
+def _cleanup_paths(*paths: str) -> None:
+    """Background-task cleanup for files/directories (ignores missing paths)."""
+    for p in paths:
+        try:
+            if not p:
+                continue
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+            elif os.path.isfile(p):
+                os.remove(p)
+        except Exception as e:
+            logger.warning("Cleanup failed for %s: %s", p, e)
+
+
+def _zip_files(files: list[str], dest: str) -> str:
+    """Pack multiple media files into a zip (dedupes colliding basenames)."""
+    seen: set[str] = set()
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, path in enumerate(files):
+            name = os.path.basename(path)
+            if name in seen:
+                stem, ext = os.path.splitext(name)
+                name = f"{stem}-{i}{ext}"
+            seen.add(name)
+            zf.write(path, arcname=name)
+    return dest
+
+
 # ── Endpoints ──
 
 @app.get("/")
@@ -109,6 +144,7 @@ def root():
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "platforms": ["youtube", "tiktok", "instagram", "facebook", "twitter"],
+        "media": ["video", "photo", "carousel"],
     }
 
 
@@ -117,14 +153,14 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/download", response_model=DownloadResponse)
-def download_video(req: DownloadRequest, background_tasks: BackgroundTasks):
+@app.post("/download")
+async def download_media(req: DownloadRequest, background_tasks: BackgroundTasks):
     """
-    Download a video from a supported platform.
-    Returns the video file as a download response.
-    """
-    from app.downloader.base import DownloadResult
+    Download media from a supported platform.
 
+    - Single video/photo → returned directly as a file download.
+    - Carousel/album (multiple files) → returned as a `.zip` archive.
+    """
     url = req.url.strip()
 
     # ── Resolve redirects (e.g. vt.tiktok.com) ──
@@ -144,25 +180,63 @@ def download_video(req: DownloadRequest, background_tasks: BackgroundTasks):
             detail="URL not recognized. Supported: YouTube, TikTok, Instagram, Facebook, Twitter/X",
         )
 
-    result = downloader.download(url)
+    # yt-dlp blocks — offload from the event loop.
+    result = await asyncio.to_thread(downloader.download, url)
 
     if not result.success:
         raise HTTPException(status_code=400, detail=f"Download failed: {result.error}")
 
-    if not result.file_path or not os.path.exists(result.file_path):
+    files = [f for f in result.files if f and os.path.exists(f)]
+    if not files:
+        cleanup_result(result)
         raise HTTPException(status_code=500, detail="File not found after download")
 
-    # Return file
-    filename = os.path.basename(result.file_path)
-    background_tasks.add_task(os.remove, result.file_path)
+    # Enforce per-file size limit (same rule as the Telegram bot).
+    ok_files: list[str] = []
+    for f in files:
+        size_mb = os.path.getsize(f) / (1024 * 1024)
+        if size_mb <= settings.MAX_FILE_SIZE_MB:
+            ok_files.append(f)
+    if not ok_files:
+        cleanup_result(result)
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large (max {settings.MAX_FILE_SIZE_MB} MB per file)",
+        )
+
+    headers = {
+        "X-Platform": downloader.PLATFORM,
+        "X-Title": result.title or "",
+        "X-Media-Type": result.media_type,
+        "X-Media-Count": str(len(ok_files)),
+    }
+    if len(ok_files) < len(files):
+        headers["X-Excluded-Too-Large"] = str(len(files) - len(ok_files))
+
+    if len(ok_files) == 1:
+        # Single file → stream it directly with its real content type.
+        path = ok_files[0]
+        media_type, _ = mimetypes.guess_type(path)
+        background_tasks.add_task(_cleanup_paths, result.dir_path)
+        return FileResponse(
+            path=path,
+            filename=os.path.basename(path),
+            media_type=media_type or "application/octet-stream",
+            headers=headers,
+        )
+
+    # Multiple files (carousel/album) → zip them.
+    zip_name = f"{downloader.PLATFORM}-album-{uuid.uuid4().hex[:8]}.zip"
+    zip_path = os.path.join(settings.DOWNLOAD_DIR, zip_name)
+    os.makedirs(settings.DOWNLOAD_DIR, exist_ok=True)
+    await asyncio.to_thread(_zip_files, ok_files, zip_path)
+    background_tasks.add_task(_cleanup_paths, zip_path, result.dir_path)
+    headers["X-Archive"] = zip_name
     return FileResponse(
-        path=result.file_path,
-        filename=filename,
-        media_type="video/mp4",
-        headers={
-            "X-Platform": downloader.PLATFORM,
-            "X-Title": result.title or "",
-        },
+        path=zip_path,
+        filename=zip_name,
+        media_type="application/zip",
+        headers=headers,
     )
 
 
