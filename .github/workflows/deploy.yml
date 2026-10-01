@@ -50,7 +50,4 @@ jobs:
             curl -fsS http://localhost:${API_PORT:-8000}/health || \
               curl -fsS http://localhost:8000/health
 
-            echo "==> Bersihkan image lama (hemat disk)"
-            docker image prune -f
-
             echo "==> Deploy selesai ✅"
