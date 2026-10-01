@@ -101,12 +101,13 @@ class InstagramDownloader(BaseDownloader):
         if result.success:
             return result
 
-        err = (result.error or "").lower()
+        err = f"{result.raw_error or ''}\n{result.error or ''}".lower()
         photo_signals = (
             "there is no video in this post",
             "no video formats",
             "no formats found",
             "no media found",
+            "berupa foto",  # already-cleaned signal (belt & braces)
         )
         if any(s in err for s in photo_signals):
             logger.info("yt-dlp found no video for %s — trying photo fallback", canonical)

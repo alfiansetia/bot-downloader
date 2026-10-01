@@ -150,6 +150,10 @@ class DownloadResult:
         self.media_type = media_type  # "video" | "photo" | "mixed" | "other"
         # Per-request working directory holding `files` (safe to delete).
         self.dir_path = dir_path
+        # Raw (un-cleaned) error — overrides check this to detect signals
+        # like "there is no video in this post" that clean_error_message
+        # would otherwise erase before they can trigger photo fallbacks.
+        self.raw_error = error
         self.error = clean_error_message(error)
 
     @property
@@ -177,6 +181,29 @@ def cleanup_result(result: "DownloadResult") -> None:
         shutil.rmtree(target, ignore_errors=True)
     except Exception as e:
         logger.warning("Failed to cleanup download dir: %s", e)
+
+
+def _is_permanent_error(exc: Exception) -> bool:
+    """True if retrying the same URL is pointless (saves 2 wasted attempts).
+
+    Covers photo-post signals, unsupported URLs, and private/login walls —
+    none of which resolve by waiting ~seconds and retrying.
+    """
+    msg = str(exc).lower()
+    signals = (
+        "there is no video in this post",
+        "no video could be found",
+        "no video formats",
+        "no formats found",
+        "unsupported url",
+        "private",
+        "login",
+        "sign in",
+        "permission",
+        "status code 10216",  # TikTok private post
+        "status code 10222",  # TikTok private account
+    )
+    return any(s in msg for s in signals)
 
 
 class BaseDownloader(ABC):
@@ -274,11 +301,14 @@ class BaseDownloader(ABC):
                     url,
                     str(e),
                 )
+                if _is_permanent_error(e):
+                    logger.info("Permanent failure detected — skipping retries for %s", url)
+                    break
                 if attempt < max_retries:
                     # Wait slightly before retrying
                     time.sleep(attempt * 1.5)
 
-        logger.exception("All %d download attempts failed for %s", max_retries, url)
+        logger.exception("All download attempts failed for %s", url)
         shutil.rmtree(job_dir, ignore_errors=True)
         return DownloadResult(success=False, error=str(last_exception))
 

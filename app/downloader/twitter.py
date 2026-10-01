@@ -57,7 +57,7 @@ class TwitterDownloader(BaseDownloader):
         if result.success:
             return result
 
-        err = (result.error or "").lower()
+        err = f"{result.raw_error or ''}\n{result.error or ''}".lower()
         photo_signals = (
             "no video could be found",
             "no video formats",
